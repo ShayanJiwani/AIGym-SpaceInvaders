@@ -1,6 +1,6 @@
 import gym
 import numpy as np
-from keras.models import Sequential
+from keras.models import Sequential, model_from_json, load_json
 from keras.layers import Dense
 from keras.optimizers import Adam
 import cv2
@@ -79,6 +79,19 @@ class InvaderNN():
         # cv2.imshow('Window',observation)
         # cv2.waitKey(0)
 
+    def save(self):
+        model_json = self.model.to_json()
+        with open("model_num.json", "w") as json_file:
+            json_file.write(model_json)
+        self.model.save_weights("model_num.h5")
+        
+    def load(self):
+        json_file = open('model_num.json', 'r')
+        loaded_model_json = json_file.read()
+        json_file.close()
+        loaded_model = model_from_json(loaded_model_json)
+        loaded_model.load_weights("model_num.h5")
+    
 
 invaderNN_model = InvaderNN(env)
 scores = []
@@ -94,7 +107,7 @@ for i_episode in range(n_episodes):
     while not done:
         t+=1
         env.render()
-        action = invaderNN_model.get_action(observation) #env.action_space.sample()
+        action = invaderNN_model.get_action(observation)
         new_observation, reward, done, info = env.step(action)
         new_observation = invaderNN_model.preprocess(new_observation).reshape((1, 84*84))
 
@@ -112,7 +125,9 @@ for i_episode in range(n_episodes):
     invaderNN_model.fit_model() # fit data from the episode
     print("Episode {}: {}".format(i_episode, score))
     scores.append(score)
-
+    invaderNN_model.save()
+    
+   
 from scipy import stats
 
 xi = np.arange(n_episodes)
