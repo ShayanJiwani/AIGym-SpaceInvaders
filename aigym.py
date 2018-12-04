@@ -2,7 +2,7 @@ import gym
 import numpy as np
 from keras.models import Sequential
 from keras.layers import Dense
-from keras.optimizers import SGD
+from keras.optimizers import Adam
 import cv2
 import matplotlib.pyplot as plt
 
@@ -17,15 +17,13 @@ class InvaderNN():
         self.env = env
         self.state = env.observation_space
         self.discount = 0.95
-        self.e = 1
-        self.lr = 0.01
-        self.model_actual = self.create_model()
-        self.model_target = self.create_model()
+        self.epsilon = 1
+        self.epsilon_decay = 0.995
+        self.epsilon_min = 0.01
+        self.learning_rate = 0.01
+        self.model = self.build_model()
         self.history = []
 
-
-
-        self.create_model()
 
     def set_state(self, observation):
         self.state = observation
@@ -33,43 +31,39 @@ class InvaderNN():
     def save_history(self, history_item):
         self.history.append(history_item)
 
-    def train(self):
-        w = self.model.get_weights()
-        target_w = self.target_model.get_weights()
-        for i in range(len(target_w)):
-            target_w[i] = w[i]
-        self.model_target.set_weights(target_w)
-
-    def create_model(self):
+    def build_model(self):
         model = Sequential()
-        model.add( Dense(24, activation='relu', input_shape=(84,84) ) ) # (84,84,1)
-        model.add(Dense(48, activation='relu'))
+        model.add(Dense(24, activation='relu', input_dim=84*84 )) # (84,84,1)
         model.add(Dense(24, activation='relu'))
-        model.add(Dense(env.action_space.n))
-        model.compile(loss="mean_squared_error",
-            optimizer=SGD(lr=self.lr, clipnorm=1.))
+        model.add(Dense(self.env.action_space.n, activation='linear'))
+        model.compile(loss="mse", optimizer=Adam(lr=self.learning_rate))
         return model
 
 
     def fit_model(self):
-        for instance in self.history:
-            i_episode, action, state, reward, done, info = instance.values()
-            target = self.model_target.predict(self.state)
-            if done:
-                target[0][action] = reward
-            else:
-                Q_future = max(self.target_model.predict(state)[0])
-                target[0][action] = reward + Q_future * self.discount
-                self.model_actual.fit(state, target, epochs=1, verbose=0) # fit the actual model with data predicted by target model
-        print(self.model_actual.get_weights())
+
+        if len(self.history) < 32:
+            return
+        batch = np.random.choice(self.history, 32)
+
+        for sample in batch:
+            target = sample['reward']
+            if sample['done']:
+                q_value = self.model.predict(sample['new_state'])[0]
+                target += self.discount * np.argmax(q_value )
+            target_f = self.model.predict(sample['state'])
+            target_f[0][sample['action']] = target
+            self.model.fit(sample['state'], target_f, epochs=1, verbose=0)
+        self.epsilon *= self.epsilon_decay
+        self.epsilon = max(self.epsilon_min, self.epsilon)
 
     def get_action(self, state):
         # epsilon greedy
-        if np.random.random() < self.e:
+
+        if np.random.random() < self.epsilon:
             return self.env.action_space.sample()
         else:
-            return np.argmax(self.model_actual.predict(state)[0])
-
+            return np.argmax(self.model.predict(state)[0])
 
     # resize to (84,84)
     # grayscale
@@ -80,59 +74,42 @@ class InvaderNN():
         observation = cv2.resize(observation, dsize=(84, 110), interpolation=cv2.INTER_CUBIC)
         observation = observation[26::,]
         observation = cv2.cvtColor(observation, cv2.COLOR_BGR2GRAY)
-        self.state = observation
+        return observation
         # print(observation)
         # cv2.imshow('Window',observation)
         # cv2.waitKey(0)
 
 
-    def get_action_list(self):
-        pass
-
-    def load_weights(self):
-        pass
-
-    def save_weights(self):
-        pass
-
 invaderNN_model = InvaderNN(env)
 scores = []
-n_episodes = 20
+n_episodes = 100
+
 for i_episode in range(n_episodes):
 
-    observation = env.reset()
-
-    #image_rescaled = rescale(observation, 1.0 / 4.0, anti_aliasing=False)
-    #print(image_rescaled.shape)
-    #break
+    observation = invaderNN_model.preprocess( env.reset() ).reshape((1, 84*84))
     done = False
     prev_lives = 3
     t = 0
     score = 0
-    while not done: # if not done after 1000 frames, game is stale
+    while not done:
         t+=1
         env.render()
         action = invaderNN_model.get_action(observation) #env.action_space.sample()
         new_observation, reward, done, info = env.step(action)
-        invaderNN_model.preprocess(new_observation)
-        new_state = invaderNN_model.state
+        new_observation = invaderNN_model.preprocess(new_observation).reshape((1, 84*84))
 
-        if info['ale.lives'] < prev_lives:
-            reward -= 50 * (3-info['ale.lives'])
-            prev_lives -= 1
+        # curr_lives = info['ale.lives']
+        # if curr_lives < prev_lives:
+        #     reward -= 50 * (3-curr_lives)
+        #     prev_lives -= 1
 
-        score += reward*info['ale.lives']
-        invaderNN_model.save_history( {'episode':i_episode, 'action': action, 'state': new_state, 'reward': reward, 'done':done, 'info':info} )
-        invaderNN_model.fit_model()
-        #invaderNN_model.train()
-        if done:
-            # score = 0
-            # for h in invaderNN_model.history:
-            #     score += h['reward']
-            #print("Episode {} finished after {} timesteps with score {}".format(i_episode, t+1, score))
-            break
+        score += reward
+        invaderNN_model.save_history( {'episode':i_episode, 'action': action, 'state':observation, 'new_state': new_observation, 'reward': reward, 'done':done, 'info':info} )
 
+        observation = new_observation
 
+        if done:break
+    invaderNN_model.fit_model() # fit data from the episode
     print("Episode {}: {}".format(i_episode, score))
     scores.append(score)
 
@@ -142,6 +119,7 @@ xi = np.arange(n_episodes)
 slope, intercept, r_value, p_value, std_err = stats.linregress(xi,scores)
 line = slope*xi+intercept
 plt.figure()
+plt.title("y={0:0.2f}*x+{1:0.2f}".format(slope, intercept))
 plt.plot(xi,scores,'o', xi, line)
 plt.xlabel("Episode")
 plt.ylabel("Score")
