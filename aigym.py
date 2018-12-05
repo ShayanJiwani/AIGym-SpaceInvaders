@@ -1,11 +1,11 @@
 import gym
 import numpy as np
-from keras.models import Sequential, model_from_json, load_json
+from keras.models import Sequential, model_from_json
 from keras.layers import Dense
 from keras.optimizers import Adam
 import cv2
 import matplotlib.pyplot as plt
-
+from collections import deque
 env = gym.make('SpaceInvaders-v0')
 
 #
@@ -22,7 +22,8 @@ class InvaderNN():
         self.epsilon_min = 0.01
         self.learning_rate = 0.01
         self.model = self.build_model()
-        self.history = []
+        self.history = deque(maxlen=200)
+        self.load()
 
 
     def set_state(self, observation):
@@ -46,8 +47,10 @@ class InvaderNN():
             return
         batch = np.random.choice(self.history, 32)
 
+
         for sample in batch:
             target = sample['reward']
+
             if sample['done']:
                 q_value = self.model.predict(sample['new_state'])[0]
                 target += self.discount * np.argmax(q_value )
@@ -84,18 +87,18 @@ class InvaderNN():
         with open("model_num.json", "w") as json_file:
             json_file.write(model_json)
         self.model.save_weights("model_num.h5")
-        
+
     def load(self):
         json_file = open('model_num.json', 'r')
         loaded_model_json = json_file.read()
         json_file.close()
         loaded_model = model_from_json(loaded_model_json)
         loaded_model.load_weights("model_num.h5")
-    
+
 
 invaderNN_model = InvaderNN(env)
 scores = []
-n_episodes = 100
+n_episodes = 300
 
 for i_episode in range(n_episodes):
 
@@ -106,10 +109,10 @@ for i_episode in range(n_episodes):
     score = 0
     while not done:
         t+=1
-        env.render()
+        #env.render()
         action = invaderNN_model.get_action(observation)
         new_observation, reward, done, info = env.step(action)
-        new_observation = invaderNN_model.preprocess(new_observation).reshape((1, 84*84))
+        new_observation = invaderNN_model.preprocess(new_observation).reshape((1, 84*84)) - np.sum([h['state'] for h in invaderNN_model.history])
 
         # curr_lives = info['ale.lives']
         # if curr_lives < prev_lives:
@@ -126,17 +129,24 @@ for i_episode in range(n_episodes):
     print("Episode {}: {}".format(i_episode, score))
     scores.append(score)
     invaderNN_model.save()
-    
-   
+
+
 from scipy import stats
+from scipy.optimize import curve_fit
+
+def f(x, a, b):
+    return a*x +b
+
 
 xi = np.arange(n_episodes)
-slope, intercept, r_value, p_value, std_err = stats.linregress(xi,scores)
-line = slope*xi+intercept
+popt, pconv = curve_fit(f, xi, score)
+line = f(xi, *popt)
+
 plt.figure()
-plt.title("y={0:0.2f}*x+{1:0.2f}".format(slope, intercept))
+plt.title("y={0:0.2f}*x + {1:0.2f}".format(popt[0], popt[1]))
 plt.plot(xi,scores,'o', xi, line)
 plt.xlabel("Episode")
 plt.ylabel("Score")
 plt.show()
+plt.savefig("outfile.png")
 #print([(hist['episode'], hist['action'],hist['reward']) for hist in invaderNN_model.history if hist['reward'] > 0])
