@@ -1,8 +1,10 @@
 import gym
 import numpy as np
 from keras.models import Sequential, model_from_json
-from keras.layers import Dense
+from keras.layers import Dense, Conv2D, MaxPooling2D, Flatten
+from keras import optimizers
 from keras.optimizers import Adam
+from keras import losses
 import cv2
 import matplotlib.pyplot as plt
 from collections import deque
@@ -23,7 +25,7 @@ class InvaderNN():
         self.learning_rate = 0.01
         self.model = self.build_model()
         self.history = deque(maxlen=200)
-        self.load()
+        #self.load()
 
 
     def set_state(self, observation):
@@ -33,11 +35,30 @@ class InvaderNN():
         self.history.append(history_item)
 
     def build_model(self):
+        # model = Sequential()
+        # model.add(Conv2D(32, kernel_size=(5, 5), strides=(1, 1),
+        #                  activation='relu', input_shape=(84,84,1)))
+        # model.add(MaxPooling2D(pool_size=(2, 2), strides=(2, 2)))
+        # # model.add(Conv2D(64, (5, 5), activation='relu'))
+        # # model.add(MaxPooling2D(pool_size=(2, 2)))
+        # # model.add(Flatten())
+        # model.add(Dense(24, activation='relu', input_dim=84*84 )) # (84,84,1)
+        # model.add(Dense(24, activation='relu'))
+        # model.add(Dense(self.env.action_space.n, activation='linear'))
+        # model.compile(loss="mse", optimizer=Adam(lr=self.learning_rate))
         model = Sequential()
-        model.add(Dense(24, activation='relu', input_dim=84*84 )) # (84,84,1)
-        model.add(Dense(24, activation='relu'))
-        model.add(Dense(self.env.action_space.n, activation='linear'))
-        model.compile(loss="mse", optimizer=Adam(lr=self.learning_rate))
+        model.add(Conv2D(32, kernel_size=(5, 5), strides=(1, 1),
+                         activation='relu',
+                         input_shape=(84,84,1)))
+        model.add(MaxPooling2D(pool_size=(2, 2), strides=(2, 2)))
+        model.add(Conv2D(64, (5, 5), activation='relu'))
+        model.add(MaxPooling2D(pool_size=(2, 2)))
+        model.add(Flatten())
+        model.add(Dense(1000, activation='relu'))
+        model.add(Dense(self.env.action_space.sample(), activation='softmax'))
+        model.compile(loss=losses.categorical_crossentropy,
+              optimizer=optimizers.SGD(lr=0.01),
+              metrics=['accuracy'])
         return model
 
 
@@ -46,7 +67,6 @@ class InvaderNN():
         if len(self.history) < 32:
             return
         batch = np.random.choice(self.history, 32)
-
 
         for sample in batch:
             target = sample['reward']
@@ -98,7 +118,7 @@ class InvaderNN():
 
 invaderNN_model = InvaderNN(env)
 scores = []
-n_episodes = 300
+n_episodes = 100
 
 for i_episode in range(n_episodes):
 
