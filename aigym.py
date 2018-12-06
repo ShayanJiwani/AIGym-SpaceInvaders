@@ -17,7 +17,7 @@ class InvaderNN():
 
     def __init__(self, env):
         self.env = env
-        self.state = env.observation_space
+        self.state = self.preprocess(env.observation_space)
         self.discount = 0.95
         self.epsilon = 1
         self.epsilon_decay = 0.995
@@ -47,11 +47,11 @@ class InvaderNN():
         # model.add(Dense(self.env.action_space.n, activation='linear'))
         # model.compile(loss="mse", optimizer=Adam(lr=self.learning_rate))
         model = Sequential()
-        model.add(Conv2D(32, kernel_size=(5, 5), strides=(1, 1),
+        model.add(Conv2D(32, kernel_size=(84, 84), strides=(1, 1),
                          activation='relu',
-                         input_shape=(84,84,1)))
-        model.add(MaxPooling2D(pool_size=(2, 2), strides=(2, 2)))
-        model.add(Conv2D(64, (5, 5), activation='relu'))
+                         input_shape=(32, 1, 84, 84)))
+        model.add(MaxPooling2D(pool_size=(4, 4), strides=(2, 2)))
+        model.add(Conv2D(64, (84,84), activation='relu'))
         model.add(MaxPooling2D(pool_size=(2, 2)))
         model.add(Flatten())
         model.add(Dense(1000, activation='relu'))
@@ -72,8 +72,9 @@ class InvaderNN():
             target = sample['reward']
 
             if sample['done']:
-                q_value = self.model.predict(sample['new_state'])[0]
-                target += self.discount * np.argmax(q_value )
+
+                q_value = self.model.predict(sample['new_state'])
+                target += self.discount * np.argmax(q_value)
             target_f = self.model.predict(sample['state'])
             target_f[0][sample['action']] = target
             self.model.fit(sample['state'], target_f, epochs=1, verbose=0)
@@ -122,7 +123,7 @@ n_episodes = 100
 
 for i_episode in range(n_episodes):
 
-    observation = invaderNN_model.preprocess( env.reset() ).reshape((1, 84*84))
+    observation = invaderNN_model.preprocess( env.reset() )#.reshape((1, 84*84))
     done = False
     prev_lives = 3
     t = 0
@@ -132,7 +133,7 @@ for i_episode in range(n_episodes):
         #env.render()
         action = invaderNN_model.get_action(observation)
         new_observation, reward, done, info = env.step(action)
-        new_observation = invaderNN_model.preprocess(new_observation).reshape((1, 84*84)) - np.sum([h['state'] for h in invaderNN_model.history])
+        #new_observation = invaderNN_model.preprocess(new_observation).reshape((1, 84*84)) - np.sum([h['state'] for h in invaderNN_model.history])
 
         # curr_lives = info['ale.lives']
         # if curr_lives < prev_lives:
