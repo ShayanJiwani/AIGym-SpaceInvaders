@@ -1,14 +1,13 @@
 import gym
 import numpy as np
 from keras.models import Sequential, model_from_json
-from keras.layers import Dense, Conv2D, MaxPooling2D, Flatten
-from keras import optimizers
+from keras.layers import Dense, Conv2D, Flatten
 from keras.optimizers import Adam
-from keras import losses
 import cv2
 import matplotlib.pyplot as plt
 from collections import deque
 env = gym.make('SpaceInvaders-v0')
+import sys
 
 #
 # preprocess -> send to dense, fully connected, layer specifying shape
@@ -17,14 +16,21 @@ class InvaderNN():
 
     def __init__(self, env):
         self.env = env
-        self.state = self.preprocess(env.observation_space)
+        self.state = env.observation_space
         self.discount = 0.95
         self.epsilon = 1
         self.epsilon_decay = 0.995
         self.epsilon_min = 0.01
         self.learning_rate = 0.01
+
         self.model = self.build_model()
+        self.target_model = self.build_model()
+        self.target_model.set_weights( self.model.get_weights() )
+
+        self.history_buffer = []
         self.history = deque(maxlen=200)
+        self.stack_size = 4
+        self.stacked_frames = deque([np.zeros((84,84), dtype=np.int) for i in range(self.stack_size)], maxlen=4)
         #self.load()
 
 
@@ -35,51 +41,32 @@ class InvaderNN():
         self.history.append(history_item)
 
     def build_model(self):
-        # model = Sequential()
-        # model.add(Conv2D(32, kernel_size=(5, 5), strides=(1, 1),
-        #                  activation='relu', input_shape=(84,84,1)))
-        # model.add(MaxPooling2D(pool_size=(2, 2), strides=(2, 2)))
-        # # model.add(Conv2D(64, (5, 5), activation='relu'))
-        # # model.add(MaxPooling2D(pool_size=(2, 2)))
-        # # model.add(Flatten())
-        # model.add(Dense(24, activation='relu', input_dim=84*84 )) # (84,84,1)
-        # model.add(Dense(24, activation='relu'))
-        # model.add(Dense(self.env.action_space.n, activation='linear'))
-        # model.compile(loss="mse", optimizer=Adam(lr=self.learning_rate))
         model = Sequential()
-        model.add(Conv2D(32, kernel_size=(84, 84), strides=(1, 1),
-                         activation='relu',
-                         input_shape=(32, 1, 84, 84)))
-        model.add(MaxPooling2D(pool_size=(4, 4), strides=(2, 2)))
-        model.add(Conv2D(64, (84,84), activation='relu'))
-        model.add(MaxPooling2D(pool_size=(2, 2)))
+        model.add(Conv2D(32, 8, 8, subsample=(4, 4), input_shape=(84, 84, 4)))
+        model.add(Conv2D(64, 4, 4, subsample=(2, 2)))
+        model.add(Conv2D(64, 3, 3))
         model.add(Flatten())
-        model.add(Dense(1000, activation='relu'))
-        model.add(Dense(self.env.action_space.sample(), activation='softmax'))
-        model.compile(loss=losses.categorical_crossentropy,
-              optimizer=optimizers.SGD(lr=0.01),
-              metrics=['accuracy'])
+        model.add(Dense(512))
+        model.add(Dense(self.env.action_space.n))
+        model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
         return model
 
+    def fit(self):
+        batch = np.random.sample(self.history, 32)
+        targets = np.zeros((4, self.env.action_space.n))
+        for i in range(4):
+            data = s_batch[i].reshape(1,84,84,4)
+            targets[i] = self.model.predict(data)
+            future_action = self.target_model.predict(new_state_batch[i].reshape(1,84,84,4))
+        loss = self.model.train_on_batch(state_batch, targets)
+        print("loss =", loss)
 
-    def fit_model(self):
-
-        if len(self.history) < 32:
-            return
-        batch = np.random.choice(self.history, 32)
-
-        for sample in batch:
-            target = sample['reward']
-
-            if sample['done']:
-
-                q_value = self.model.predict(sample['new_state'])
-                target += self.discount * np.argmax(q_value)
-            target_f = self.model.predict(sample['state'])
-            target_f[0][sample['action']] = target
-            self.model.fit(sample['state'], target_f, epochs=1, verbose=0)
-        self.epsilon *= self.epsilon_decay
-        self.epsilon = max(self.epsilon_min, self.epsilon)
+    def fit_target(self):
+        model_weights = self.model.get_weights()
+        target_model_weights = self.target_model.get_weights()
+        for i in range(len(model_weights)):
+            target_model_weights[i] = .1 * model_weights[i] + (.9) * target_model_weights[i]
+        self.target_model.set_weights(target_model_weights)
 
     def get_action(self, state):
         # epsilon greedy
@@ -87,21 +74,29 @@ class InvaderNN():
         if np.random.random() < self.epsilon:
             return self.env.action_space.sample()
         else:
-            return np.argmax(self.model.predict(state)[0])
+            data = state.reshape(1,84,84,4)
+            q_actions = self.model.predict(data, batch_size=1)
+            return np.argmax(q_actions) # optimal policy
 
     # resize to (84,84)
     # grayscale
     # dimensions are (84,84,1)
     # remove top 26 rows as they only contain the score
     # concatenate the last four "images" of (84,84) to get 84x84*4 image as input
-    def preprocess(self, observation):
-        observation = cv2.resize(observation, dsize=(84, 110), interpolation=cv2.INTER_CUBIC)
-        observation = observation[26::,]
-        observation = cv2.cvtColor(observation, cv2.COLOR_BGR2GRAY)
-        return observation
+    def preprocess(self):
+        if len(self.history_buffer) < 4:
+            return None
+        input_buffer = []
+        for instance in self.history_buffer:
+            observation = cv2.resize(instance, dsize=(84, 110), interpolation=cv2.INTER_CUBIC)
+            observation = observation[26::,]
+            observation = cv2.cvtColor(observation, cv2.COLOR_BGR2GRAY)
+            input_buffer.append(observation)
+        return np.array(input_buffer)
         # print(observation)
         # cv2.imshow('Window',observation)
         # cv2.waitKey(0)
+
 
     def save(self):
         model_json = self.model.to_json()
@@ -119,11 +114,11 @@ class InvaderNN():
 
 invaderNN_model = InvaderNN(env)
 scores = []
-n_episodes = 100
+n_episodes = int(sys.argv[1]) or 100
 
 for i_episode in range(n_episodes):
 
-    observation = invaderNN_model.preprocess( env.reset() )#.reshape((1, 84*84))
+    observation = invaderNN_model.env.reset()
     done = False
     prev_lives = 3
     t = 0
@@ -131,22 +126,26 @@ for i_episode in range(n_episodes):
     while not done:
         t+=1
         #env.render()
+        state = invaderNN_model.preprocess() # the combined four state observation
+
         action = invaderNN_model.get_action(observation)
         new_observation, reward, done, info = env.step(action)
-        #new_observation = invaderNN_model.preprocess(new_observation).reshape((1, 84*84)) - np.sum([h['state'] for h in invaderNN_model.history])
-
-        # curr_lives = info['ale.lives']
-        # if curr_lives < prev_lives:
-        #     reward -= 50 * (3-curr_lives)
-        #     prev_lives -= 1
-
         score += reward
+
+        invaderNN_model.history_buffer.append(observation)
+        if state is not None:
+            invaderNN_model.history_buffer.pop(0)
+
         invaderNN_model.save_history( {'episode':i_episode, 'action': action, 'state':observation, 'new_state': new_observation, 'reward': reward, 'done':done, 'info':info} )
+
+        if len(invaderNN_model.history_buffer) > 32:
+            invaderNN_model.fit()
+            invaderNN_model.fit_target()
 
         observation = new_observation
 
         if done:break
-    invaderNN_model.fit_model() # fit data from the episode
+    #invaderNN_model.fit_model() # fit data from the episode
     print("Episode {}: {}".format(i_episode, score))
     scores.append(score)
     invaderNN_model.save()
