@@ -6,8 +6,8 @@ from keras.optimizers import Adam
 import cv2
 import matplotlib.pyplot as plt
 from collections import deque
-env = gym.make('SpaceInvaders-v0')
 import sys
+env = gym.make('SpaceInvaders-v0')
 
 #
 # preprocess -> send to dense, fully connected, layer specifying shape
@@ -52,13 +52,17 @@ class InvaderNN():
         return model
 
     def fit(self):
-        batch = np.random.sample(self.history, 32)
+        episodes, actions, states, new_states, rewards, dones, infos = np.random.sample(self.history, 32)
         targets = np.zeros((4, self.env.action_space.n))
-        for i in range(4):
+        for i in range(32):
             data = s_batch[i].reshape(1,84,84,4)
-            targets[i] = self.model.predict(data)
-            future_action = self.target_model.predict(new_state_batch[i].reshape(1,84,84,4))
-        loss = self.model.train_on_batch(state_batch, targets)
+            targets[i] = self.model.predict(states[i].reshape(1,84,84,4), batche_size=1)
+            future_action = self.target_model.predict(new_states[i].reshape(1,84,84,4), batch_size=1)
+            targets[i, actions[i]] = rewards[i]
+            if not dones[i]:
+                targets[i, actions[i]] += .99* np.max(future_action)
+
+        loss = self.model.train_on_batch(states, targets)
         print("loss =", loss)
 
     def fit_target(self):
@@ -115,6 +119,8 @@ class InvaderNN():
 invaderNN_model = InvaderNN(env)
 scores = []
 n_episodes = int(sys.argv[1]) or 100
+outfile = open("log.csv","w")
+outfile.write("episode,score,mean\n")
 
 for i_episode in range(n_episodes):
 
@@ -146,27 +152,20 @@ for i_episode in range(n_episodes):
 
         if done:break
     #invaderNN_model.fit_model() # fit data from the episode
-    print("Episode {}: {}".format(i_episode, score))
+    print("Episode {0} Score: {1} Mean: {2:0.2f}".format(i_episode, score,np.mean(scores)))
+    outfile.write("{0},{1},{2}\n".format(i_episode, score, np.mean(scores)))
     scores.append(score)
     invaderNN_model.save()
 
-
-from scipy import stats
-from scipy.optimize import curve_fit
-
-def f(x, a, b):
-    return a*x +b
-
+outfile.close()
 
 xi = np.arange(n_episodes)
-popt, pconv = curve_fit(f, xi, score)
-line = f(xi, *popt)
-
 plt.figure()
-plt.title("y={0:0.2f}*x + {1:0.2f}".format(popt[0], popt[1]))
-plt.plot(xi,scores,'o', xi, line)
+plt.title("mean={}".format(np.mean(scores)))
+plt.plot(xi,scores,'o', alpha=.3)
 plt.xlabel("Episode")
 plt.ylabel("Score")
 plt.show()
 plt.savefig("outfile.png")
 #print([(hist['episode'], hist['action'],hist['reward']) for hist in invaderNN_model.history if hist['reward'] > 0])
+
