@@ -52,7 +52,16 @@ class InvaderNN():
         return model
 
     def fit(self):
-        episodes, actions, states, new_states, rewards, dones, infos = np.random.sample(self.history, 32)
+        # need to figure out what we are going to do with fit if we are only storing 4 frames at a time
+        # we can't do batches if we are saving every 4 frames
+        episodes, actions, states, new_states, rewards, dones, infos = np.random.choice(self.history_buffer, 4)
+        print("episodes-", epsiodes, "...")
+        print("action-", actions, "...")
+        print("states-", states, "...")
+        print("new_states-", new_states, "...")
+        print("rewards-", rewards, "...")
+        print("dones-", dones, "...")
+        print("infos-", infos, "\n")
         targets = np.zeros((4, self.env.action_space.n))
         for i in range(32):
             data = s_batch[i].reshape(1,84,84,4)
@@ -87,16 +96,15 @@ class InvaderNN():
     # dimensions are (84,84,1)
     # remove top 26 rows as they only contain the score
     # concatenate the last four "images" of (84,84) to get 84x84*4 image as input
-    def preprocess(self):
-        if len(self.history_buffer) < 4:
+    def preprocess(self, instance):
+        observation = cv2.resize(instance, dsize=(84, 110), interpolation=cv2.INTER_CUBIC)
+        observation = observation[26::,]
+        observation = cv2.cvtColor(observation, cv2.COLOR_BGR2GRAY)
+        self.history_buffer.append(observation)
+        if (len(self.history_buffer) == 4):
+            return np.array(self.history_buffer)
+        else:
             return None
-        input_buffer = []
-        for instance in self.history_buffer:
-            observation = cv2.resize(instance, dsize=(84, 110), interpolation=cv2.INTER_CUBIC)
-            observation = observation[26::,]
-            observation = cv2.cvtColor(observation, cv2.COLOR_BGR2GRAY)
-            input_buffer.append(observation)
-        return np.array(input_buffer)
         # print(observation)
         # cv2.imshow('Window',observation)
         # cv2.waitKey(0)
@@ -130,23 +138,27 @@ for i_episode in range(n_episodes):
     t = 0
     score = 0
     while not done:
+
         t+=1
         #env.render()
-        state = invaderNN_model.preprocess() # the combined four state observation
-
+        # state = invaderNN_model.preprocess() # the combined four state observation
         action = invaderNN_model.get_action(observation)
         new_observation, reward, done, info = env.step(action)
         score += reward
-
-        invaderNN_model.history_buffer.append(observation)
-        if state is not None:
-            invaderNN_model.history_buffer.pop(0)
-
-        invaderNN_model.save_history( {'episode':i_episode, 'action': action, 'state':observation, 'new_state': new_observation, 'reward': reward, 'done':done, 'info':info} )
-
-        if len(invaderNN_model.history_buffer) > 32:
+        # print("len of invader nn model history == ", len(invaderNN_model.history), "\n")
+        # invaderNN_model.history_buffer.append(observation)
+        # if state is not None:
+        #     invaderNN_model.history_buffer.pop(0)
+        # else:
+        #     print("its none")
+        invaderNN_model.preprocess(observation)
+        #invaderNN_model.save_history( {'episode':i_episode, 'action': action, 'state':observation, 'new_state': new_observation, 'reward': reward, 'done':done, 'info':info} )
+        # print("len is == ", len(invaderNN_model.history))
+        if len(invaderNN_model.history_buffer) == 4:
+            #print(invaderNN_model.history_buffer)
             invaderNN_model.fit()
             invaderNN_model.fit_target()
+            invaderNN_model.history_buffer = []
 
         observation = new_observation
 
@@ -168,4 +180,3 @@ plt.ylabel("Score")
 plt.show()
 plt.savefig("outfile.png")
 #print([(hist['episode'], hist['action'],hist['reward']) for hist in invaderNN_model.history if hist['reward'] > 0])
-
