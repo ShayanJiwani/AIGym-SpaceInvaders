@@ -1,3 +1,7 @@
+# THIS CODE IS MY OWN WORK, IT WAS WRITTEN WITHOUT CONSULTING
+#
+# A TUTOR OR CODE WRITTEN BY OTHER STUDENTS - Safa Tinaztepe and Shayan Jiwani
+
 import gym
 import numpy as np
 from keras.models import Sequential, model_from_json
@@ -19,18 +23,17 @@ class InvaderNN():
         self.env = env
         self.state = env.observation_space
         self.discount = 0.95
-        self.epsilon = 1
-        self.epsilon_decay = 0
+        self.epsilon = .9
+        self.epsilon_decay = 0.995
         self.epsilon_min = 0.01
         self.learning_rate = 0.01
 
         self.model = self.build_model()
         self.target_model = self.build_model()
         self.target_model.set_weights( self.model.get_weights() )
-        self.targets_data = []
 
         self.history_buffer = []
-        self.history = []
+        self.history = deque(maxlen=200)
         self.stack_size = 4
 
 
@@ -52,6 +55,27 @@ class InvaderNN():
         model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
         return model
 
+    def fit(self):
+        #data = list(map(np.array, list(zip(*random.sample(self.history, 32)))))
+        data = random.sample(self.history,32)
+        (states, actions, rewards, dones, new_states) = list(map(np.array, list(zip(*data))))
+        print(states.shape)
+        targets = np.zeros((32, self.env.action_space.n))
+        for i in range(32):
+            targets[i] = self.model.predict(states[i].reshape((1,84,84,4)), batch_size=1)
+            future_action = self.target_model.predict(new_states[i].reshape((1,84,84,4)), batch_size=1)
+            targets[i, actions[i]] = rewards[i]
+            if not dones[i]:
+                targets[i, actions[i]] += .99* np.max(future_action)
+        self.model.fit(np.moveaxis(np.array(states)[:4],0,-1), np.array(targets)[:4], verbose=0)
+
+
+    def fit_target(self):
+        model_weights = self.model.get_weights()
+        target_model_weights = self.target_model.get_weights()
+        for i in range(len(model_weights)):
+            target_model_weights[i] = .1 * model_weights[i] + (.9) * target_model_weights[i]
+        self.target_model.set_weights(target_model_weights)
 
     def get_action(self, state):
         # epsilon greedy
@@ -60,7 +84,8 @@ class InvaderNN():
         else:
             data = state.reshape(1,84,84,4)
             q_actions = self.model.predict(data, batch_size=1)
-
+            self.epsilon *= self.epsilon_decay
+            self.epsilon = max(self.epsilon, self.epsilon_min)
             return np.argmax(q_actions) # optimal policy
 
     # resize to (84,84)
@@ -81,6 +106,19 @@ class InvaderNN():
         # print(observation)
 
 
+    def save(self):
+        model_json = self.model.to_json()
+        with open("model_num.json", "w") as json_file:
+            json_file.write(model_json)
+        self.model.save_weights("model_num.h5")
+
+    def load(self):
+        json_file = open('model_num.json', 'r')
+        loaded_model_json = json_file.read()
+        json_file.close()
+        loaded_model = model_from_json(loaded_model_json)
+        loaded_model.load_weights("model_num.h5")
+
 
 invaderNN_model = InvaderNN(env)
 scores = []
@@ -94,16 +132,10 @@ for i_episode in range(n_episodes):
     score = 0
     env.reset()
     done = False
-    invaderNN_model.history_buffer = [env.step(5)[0] for _ in range(4)]
+    invaderNN_model.history_buffer = [env.step(1)[0] for _ in range(4)]
     curr_state = invaderNN_model.preprocess()
 
     while not done:
-
-        initial_state = invaderNN_model.preprocess()
-        invaderNN_model.history_buffer = []
-
-        action = invaderNN_model.get_action(curr_state)
-
 
         if len(invaderNN_model.history_buffer) == 4:
             initial_state = invaderNN_model.preprocess()
@@ -116,22 +148,21 @@ for i_episode in range(n_episodes):
             temp_observation, temp_score, temp_done, temp_info = env.step(action)
             score += temp_score
             invaderNN_model.history_buffer.append(temp_observation)
-            done = done | temp_done
+            done = done or temp_done
             t+=1
 
         new_state = invaderNN_model.preprocess()
         invaderNN_model.save_history((initial_state, action, score, done, new_state))
-    # call fit here
-    buf = []
-    for i in range(len(invaderNN_model.history)):
-        buf.append( (invaderNN_model.history[i][0],invaderNN_model.history[i][2])  )
-        if len(buf) == 4:
-            invaderNN_model.model.fit(np.array(buf[0]), np.array(invaderNN_model.targets_data), batch_size=1,epochs=10)
-            buf = []
+
+        if len(invaderNN_model.history) > 5000:
+            batch = random.sample(invaderNN_model.history, 32)
+            s_batch, a_batch, r_batch, d_batch, s2_batch = list(map(np.array, list(zip(*batch))))
+            invaderNN_model.fit()
+            invaderNN_model.fit_target()
+
 
     scores.append(score)
-
-    print("Episode {0} Score: {1} Mean: {2:0.2f} Epsilon: {3:0.2f} History: {4}".format(i_episode, score,np.mean(scores), invaderNN_model.epsilon, len(invaderNN_model.history)))
+    print("Episode {0} Score: {1} Mean: {2:0.2f}".format(i_episode, score,np.mean(scores)))
     outfile.write("{0},{1},{2}\n".format(i_episode, score, np.mean(scores)))
     invaderNN_model.save()
 
